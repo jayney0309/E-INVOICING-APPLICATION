@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>New Invoice — Invoicing</title>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+<header class="topbar" id="topbar"></header>
+
+<div class="container" id="mainContainer" style="display:none;">
+  <h1>New Invoice</h1>
+  <p class="subtitle" id="vatSubtitle"></p>
+
+  <div class="error-msg" id="errorMsg"></div>
+
+  <form id="invoiceForm">
+    <div class="card">
+      <h2>Customer</h2>
+      <label for="customerSelect">Choose an existing customer, or type a new name below</label>
+      <select id="customerSelect">
+        <option value="">— New customer —</option>
+      </select>
+
+      <label for="custName">Customer / buyer name</label>
+      <input type="text" id="custName" required />
+
+      <label for="custTin">Customer TIN</label>
+      <input type="text" id="custTin" />
+
+      <label for="custAddress">Customer address</label>
+      <input type="text" id="custAddress" />
+
+      <div class="checkbox-row">
+        <input type="checkbox" id="saveCustomer" checked />
+        <label for="saveCustomer" style="margin:0;">Save this as a customer for next time</label>
+      </div>
+
+      <label for="issueDate">Issue date</label>
+      <input type="date" id="issueDate" required />
+    </div>
+
+    <div class="card">
+      <h2>Items</h2>
+      <table class="line-items-table">
+        <thead>
+          <tr><th>Description</th><th style="width:80px;">Qty</th><th style="width:130px;">Unit Price</th><th class="num" style="width:110px;">Line Total</th><th style="width:36px;"></th></tr>
+        </thead>
+        <tbody id="itemsBody"></tbody>
+      </table>
+      <button type="button" class="secondary" id="addLineBtn" style="margin-top:8px;">+ Add line</button>
+
+      <div class="totals-box">
+        <div class="row"><span>Gross Amount</span><span id="totGross">₱0.00</span></div>
+        <div class="row" id="vatRow"><span>VAT (12%, inclusive)</span><span id="totVat">₱0.00</span></div>
+        <div class="row"><span>Net of VAT</span><span id="totNet">₱0.00</span></div>
+        <div class="row grand"><span>Total Due</span><span id="totGrand">₱0.00</span></div>
+      </div>
+    </div>
+
+    <div class="btn-row">
+      <button type="submit" id="submitBtn">Issue Invoice</button>
+      <a href="app.html" class="btn secondary">Cancel</a>
+    </div>
+  </form>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="js/supabase-config.js"></script>
+<script src="js/util.js"></script>
+<script src="js/db.js"></script>
+<script src="js/nav.js"></script>
+<script>
+let businessId = null;
+let business = null;
+let customers = [];
+
+(async () => {
+  const session = await requireAuth();
+  if (!session) return;
+  const nav = await renderNav("new-invoice.html");
+  if (!nav.currentId) {
+    document.body.innerHTML = `<div class="container"><div class="empty-state">Set up a business first from the <a href="app.html">Dashboard</a>.</div></div>`;
+    return;
+  }
+  businessId = nav.currentId;
+  business = nav.businesses.find((b) => b.id === businessId);
+  document.getElementById("vatSubtitle").textContent =
+    business.vat_registered
+      ? `${business.name} is VAT-registered — VAT will be computed automatically (inclusive method).`
+      : `${business.name} is Non-VAT — no VAT line will be shown on this invoice.`;
+  document.getElementById("vatRow").style.display = business.vat_registered ? "flex" : "none";
+  document.getElementById("issueDate").valueAsDate = new Date();
+
+  customers = await DB.listCustomers(businessId);
+  const sel = document.getElementById("customerSelect");
+  customers.forEach((c) => {
+    const opt = document.createElement("option");
+    opt.value = c.id;
+    opt.textContent = c.name;
+    sel.appendChild(opt);
+  });
+
+  document.getElementById("mainContainer").style.display = "block";
+  addLine();
+})();
+
+document.getElementById("customerSelect").addEventListener("change", (e) => {
+  const c = customers.find((x) => x.id === e.target.value);
+  document.getElementById("custName").value = c ? c.name : "";
+  document.getElementById("custTin").value = c ? c.tin || "" : "";
+  document.getElementById("custAddress").value = c ? c.address || "" : "";
+  document.getElementById("saveCustomer").checked = !c;
+});
+
+function addLine() {
+  const tbody = document.getElementById("itemsBody");
+  const row = document.createElement("tr");
+  row.innerHTML = `
+    <td><input type="text" class="li-desc" required /></td>
+    <td><input type="number" class="li-qty" value="1" min="0.01" step="0.01" required /></td>
+    <td><input type="number" class="li-price" value="0" min="0" step="0.01" required /></td>
+    <td class="num li-total">₱0.00</td>
+    <td><button type="button" class="remove-line">✕</button></td>
+  `;
+  row.querySelector(".remove-line").addEventListener("click", () => {
+    row.remove();
+    recalcTotals();
+  });
+  row.querySelectorAll(".li-qty, .li-price").forEach((inp) => inp.addEventListener("input", recalcTotals));
+  tbody.appendChild(row);
+  recalcTotals();
+}
+
+document.getElementById("addLineBtn").addEventListener("click", addLine);
+
+function getItems() {
+  return Array.from(document.querySelectorAll("#itemsBody tr")).map((row) => ({
+    description: row.querySelector(".li-desc").value.trim(),
+    qty: parseFloat(row.querySelector(".li-qty").value) || 0,
+    unit_price: parseFloat(row.querySelector(".li-price").value) || 0,
+  }));
+}
+
+function recalcTotals() {
+  document.querySelectorAll("#itemsBody tr").forEach((row) => {
+    const qty = parseFloat(row.querySelector(".li-qty").value) || 0;
+    const price = parseFloat(row.querySelector(".li-price").value) || 0;
+    row.querySelector(".li-total").textContent = peso(qty * price);
+  });
+  const items = getItems();
+  const { gross, vat, net } = computeVatPreview(items, business ? business.vat_registered : false);
+  document.getElementById("totGross").textContent = peso(gross);
+  document.getElementById("totVat").textContent = peso(vat);
+  document.getElementById("totNet").textContent = peso(net);
+  document.getElementById("totGrand").textContent = peso(gross);
+}
+
+document.getElementById("invoiceForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const errEl = document.getElementById("errorMsg");
+  errEl.style.display = "none";
+  const items = getItems().filter((it) => it.description && it.qty > 0);
+  if (items.length === 0) {
+    errEl.textContent = "Add at least one line item.";
+    errEl.style.display = "block";
+    return;
+  }
+
+  const btn = document.getElementById("submitBtn");
+  btn.disabled = true;
+  try {
+    let customerId = document.getElementById("customerSelect").value || null;
+    const custName = document.getElementById("custName").value.trim();
+    const custTin = document.getElementById("custTin").value.trim();
+    const custAddress = document.getElementById("custAddress").value.trim();
+
+    if (!customerId && document.getElementById("saveCustomer").checked) {
+      const created = await DB.createCustomer(businessId, { name: custName, tin: custTin, address: custAddress });
+      customerId = created.id;
+    }
+
+    const invoiceId = await DB.createInvoice({
+      businessId,
+      customerId,
+      customerName: custName,
+      customerTin: custTin,
+      customerAddress: custAddress,
+      issueDate: document.getElementById("issueDate").value,
+      items,
+    });
+
+    window.location.href = `invoice.html?id=${invoiceId}`;
+  } catch (err) {
+    errEl.textContent = err.message || "Could not create invoice.";
+    errEl.style.display = "block";
+    btn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

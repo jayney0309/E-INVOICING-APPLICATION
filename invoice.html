@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Invoice — Invoicing</title>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+<header class="topbar no-print" id="topbar"></header>
+
+<div class="container" id="mainContainer" style="display:none;">
+
+  <div class="btn-row no-print">
+    <button onclick="window.print()">Print / Save as PDF</button>
+    <button class="secondary" id="exportJsonBtn">Export EIS-draft JSON</button>
+    <button class="danger" id="voidBtn">Void invoice</button>
+    <a href="app.html" class="btn secondary">Back to Dashboard</a>
+  </div>
+
+  <div class="notice no-print">
+    This printable invoice satisfies ordinary BIR invoicing/recordkeeping rules. It is <strong>not</strong> a certified BIR e-invoice (EIS) transmission — see the EIS Export button for a reference-only draft of that data. See docs/EIS_ROADMAP.md for what's still needed for full e-invoicing compliance.
+  </div>
+
+  <div class="invoice-sheet">
+    <div class="inv-header">
+      <div>
+        <div class="inv-title" id="bizName"></div>
+        <div id="bizAddress" style="color:#6b7280; font-size:0.9rem;"></div>
+        <div id="bizTin" style="color:#6b7280; font-size:0.9rem;"></div>
+      </div>
+      <div style="text-align:right;">
+        <div style="font-size:1.1rem; font-weight:700; color:var(--navy);">INVOICE</div>
+        <div class="inv-no" id="invNo"></div>
+        <div class="inv-no" id="invDate"></div>
+        <div id="invStatusBadge" style="margin-top:6px;"></div>
+      </div>
+    </div>
+
+    <div class="parties">
+      <div class="party">
+        <h3>Billed To</h3>
+        <p id="custName" style="font-weight:600;"></p>
+        <p id="custTin"></p>
+        <p id="custAddress"></p>
+      </div>
+      <div class="party" style="text-align:right;">
+        <h3>Invoice Type</h3>
+        <p id="vatType"></p>
+      </div>
+    </div>
+
+    <table>
+      <thead><tr><th>Description</th><th class="num">Qty</th><th class="num">Unit Price</th><th class="num">Amount</th></tr></thead>
+      <tbody id="itemsBody"></tbody>
+    </table>
+
+    <div class="totals-box">
+      <div class="row" id="rowVat" style="display:none;"><span>VAT (12%, inclusive)</span><span id="totVat"></span></div>
+      <div class="row" id="rowNet"><span id="netLabel">Net of VAT</span><span id="totNet"></span></div>
+      <div class="row grand"><span>Total</span><span id="totGross"></span></div>
+    </div>
+
+    <div class="footnote">
+      This document was generated electronically and serves as your official invoice/receipt for this transaction under BIR's EOPT invoicing rules. Please keep this for your records.
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="js/supabase-config.js"></script>
+<script src="js/util.js"></script>
+<script src="js/db.js"></script>
+<script src="js/nav.js"></script>
+<script>
+let invoice = null, items = null, business = null;
+
+(async () => {
+  const session = await requireAuth();
+  if (!session) return;
+  const nav = await renderNav("");
+
+  const invoiceId = qs("id");
+  if (!invoiceId) {
+    document.body.innerHTML = `<div class="container"><div class="empty-state">No invoice specified.</div></div>`;
+    return;
+  }
+
+  try {
+    invoice = await DB.getInvoice(invoiceId);
+    items = await DB.getInvoiceItems(invoiceId);
+  } catch (err) {
+    document.body.innerHTML = `<div class="container"><div class="empty-state">Invoice not found, or you don't have access to it.</div></div>`;
+    return;
+  }
+
+  business = nav.businesses.find((b) => b.id === invoice.business_id) || {
+    name: "", address: "", tin: "", branch_code: "00000",
+  };
+
+  render();
+  document.getElementById("mainContainer").style.display = "block";
+})();
+
+function render() {
+  document.getElementById("bizName").textContent = business.name;
+  document.getElementById("bizAddress").textContent = business.address || "";
+  document.getElementById("bizTin").textContent = business.tin ? `TIN: ${business.tin}` : "";
+
+  document.getElementById("invNo").textContent = invoice.invoice_no;
+  document.getElementById("invDate").textContent = fmtDate(invoice.issue_date);
+  document.getElementById("invStatusBadge").innerHTML =
+    invoice.status === "void" ? `<span class="badge badge-void">VOID</span>` : `<span class="badge badge-issued">Issued</span>`;
+
+  document.getElementById("custName").textContent = invoice.customer_name_snapshot;
+  document.getElementById("custTin").textContent = invoice.customer_tin_snapshot ? `TIN: ${invoice.customer_tin_snapshot}` : "";
+  document.getElementById("custAddress").textContent = invoice.customer_address_snapshot || "";
+
+  document.getElementById("vatType").textContent = invoice.vat_registered_snapshot ? "VAT" : "Non-VAT";
+
+  document.getElementById("itemsBody").innerHTML = items.map((it) => `
+    <tr>
+      <td>${escapeHtml(it.description)}</td>
+      <td class="num">${Number(it.qty)}</td>
+      <td class="num">${peso(it.unit_price)}</td>
+      <td class="num">${peso(it.line_total)}</td>
+    </tr>
+  `).join("");
+
+  if (invoice.vat_registered_snapshot) {
+    document.getElementById("rowVat").style.display = "flex";
+    document.getElementById("totVat").textContent = peso(invoice.vat_amount);
+    document.getElementById("netLabel").textContent = "Net of VAT";
+  } else {
+    document.getElementById("netLabel").textContent = "Amount";
+  }
+  document.getElementById("totNet").textContent = peso(invoice.net_of_vat);
+  document.getElementById("totGross").textContent = peso(invoice.gross_amount);
+
+  const voidBtn = document.getElementById("voidBtn");
+  if (invoice.status === "void") {
+    voidBtn.disabled = true;
+    voidBtn.textContent = "Already void";
+  }
+}
+
+document.getElementById("voidBtn").addEventListener("click", async () => {
+  if (!confirm(`Void invoice ${invoice.invoice_no}? This cannot be undone. The invoice number will not be reused.`)) return;
+  try {
+    await DB.voidInvoice(invoice.id);
+    invoice.status = "void";
+    render();
+    toast("Invoice voided.");
+  } catch (err) {
+    toast(err.message || "Could not void invoice.", true);
+  }
+});
+
+document.getElementById("exportJsonBtn").addEventListener("click", () => {
+  const json = buildEisDraftJson(business, invoice, items);
+  downloadJson(`${invoice.invoice_no}-eis-draft.json`, json);
+});
+</script>
+</body>
+</html>

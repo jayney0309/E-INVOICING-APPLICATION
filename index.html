@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sign in — Invoicing</title>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+<div class="auth-container">
+  <h1 id="formTitle">Sign in</h1>
+  <p class="subtitle">Access your business's invoices.</p>
+
+  <div class="error-msg" id="errorMsg"></div>
+
+  <form id="authForm">
+    <label for="email">Email</label>
+    <input type="email" id="email" required autocomplete="email" />
+
+    <label for="password">Password</label>
+    <input type="password" id="password" required autocomplete="current-password" minlength="6" />
+
+    <div class="btn-row">
+      <button type="submit" id="submitBtn">Sign in</button>
+    </div>
+  </form>
+
+  <p style="margin-top:18px; font-size:0.88rem; color:#6b7280;">
+    <span id="toggleText">Don't have an account yet?</span>
+    <a href="#" id="toggleMode">Create one</a>
+  </p>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="js/supabase-config.js"></script>
+<script src="js/db.js"></script>
+<script>
+let mode = "signin"; // or "signup"
+
+document.getElementById("toggleMode").addEventListener("click", (e) => {
+  e.preventDefault();
+  mode = mode === "signin" ? "signup" : "signin";
+  document.getElementById("formTitle").textContent = mode === "signin" ? "Sign in" : "Create your account";
+  document.getElementById("submitBtn").textContent = mode === "signin" ? "Sign in" : "Sign up";
+  document.getElementById("toggleText").textContent = mode === "signin" ? "Don't have an account yet?" : "Already have an account?";
+  document.getElementById("toggleMode").textContent = mode === "signin" ? "Create one" : "Sign in";
+});
+
+document.getElementById("authForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const email = document.getElementById("email").value.trim();
+  const password = document.getElementById("password").value;
+  const errEl = document.getElementById("errorMsg");
+  errEl.style.display = "none";
+  const btn = document.getElementById("submitBtn");
+  btn.disabled = true;
+
+  try {
+    if (mode === "signin") {
+      await DB.signIn(email, password);
+      window.location.href = "app.html";
+    } else {
+      await DB.signUp(email, password);
+      const session = await DB.getSession();
+      if (session) {
+        window.location.href = "app.html";
+      } else {
+        errEl.textContent = "Account created — check your email to confirm, then sign in.";
+        errEl.style.display = "block";
+        mode = "signin";
+        document.getElementById("formTitle").textContent = "Sign in";
+        document.getElementById("submitBtn").textContent = "Sign in";
+        document.getElementById("toggleText").textContent = "Don't have an account yet?";
+        document.getElementById("toggleMode").textContent = "Create one";
+      }
+    }
+  } catch (err) {
+    errEl.textContent = err.message || "Something went wrong.";
+    errEl.style.display = "block";
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// If already signed in, skip straight to the app.
+(async () => {
+  const session = await DB.getSession();
+  if (session) window.location.href = "app.html";
+})();
+</script>
+</body>
+</html>

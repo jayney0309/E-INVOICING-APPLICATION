@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Customers — Invoicing</title>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+<header class="topbar" id="topbar"></header>
+
+<div class="container">
+  <h1>Customers</h1>
+  <p class="subtitle">Saved buyers you invoice regularly. You can also add a new customer directly while creating an invoice.</p>
+
+  <div class="card">
+    <h2>Add customer</h2>
+    <div class="error-msg" id="addError"></div>
+    <form id="addForm">
+      <label for="custName">Name</label>
+      <input type="text" id="custName" required />
+      <label for="custTin">TIN</label>
+      <input type="text" id="custTin" />
+      <label for="custAddress">Address</label>
+      <input type="text" id="custAddress" />
+      <div class="btn-row"><button type="submit">Add customer</button></div>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>All customers</h2>
+    <div id="listWrap"></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="js/supabase-config.js"></script>
+<script src="js/util.js"></script>
+<script src="js/db.js"></script>
+<script src="js/nav.js"></script>
+<script>
+let businessId = null;
+
+(async () => {
+  const session = await requireAuth();
+  if (!session) return;
+  const nav = await renderNav("customers.html");
+  if (!nav.currentId) {
+    document.querySelector(".container").innerHTML = `<div class="empty-state">Set up a business first from the <a href="app.html">Dashboard</a>.</div>`;
+    return;
+  }
+  businessId = nav.currentId;
+  await loadCustomers();
+})();
+
+document.getElementById("addForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const errEl = document.getElementById("addError");
+  errEl.style.display = "none";
+  try {
+    await DB.createCustomer(businessId, {
+      name: document.getElementById("custName").value.trim(),
+      tin: document.getElementById("custTin").value.trim(),
+      address: document.getElementById("custAddress").value.trim(),
+    });
+    document.getElementById("addForm").reset();
+    await loadCustomers();
+    toast("Customer added.");
+  } catch (err) {
+    errEl.textContent = err.message || "Could not add customer.";
+    errEl.style.display = "block";
+  }
+});
+
+async function loadCustomers() {
+  const customers = await DB.listCustomers(businessId);
+  const wrap = document.getElementById("listWrap");
+  if (customers.length === 0) {
+    wrap.innerHTML = `<div class="empty-state">No customers saved yet.</div>`;
+    return;
+  }
+  wrap.innerHTML = `
+    <table>
+      <thead><tr><th>Name</th><th>TIN</th><th>Address</th></tr></thead>
+      <tbody>
+        ${customers.map((c) => `<tr><td>${escapeHtml(c.name)}</td><td>${escapeHtml(c.tin || "—")}</td><td>${escapeHtml(c.address || "—")}</td></tr>`).join("")}
+      </tbody>
+    </table>
+  `;
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Dashboard — Invoicing</title>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+<header class="topbar" id="topbar"></header>
+
+<div class="container" id="mainContainer" style="display:none;">
+
+  <div id="noBusinessState" style="display:none;">
+    <div class="card">
+      <h2>Set up your business</h2>
+      <p class="subtitle">This is a one-time setup. You can add more businesses later (e.g. if you manage invoicing for more than one company).</p>
+      <div class="error-msg" id="createBizError"></div>
+      <form id="createBizForm">
+        <label for="bizName">Business name</label>
+        <input type="text" id="bizName" required />
+
+        <label for="bizTin">TIN</label>
+        <input type="text" id="bizTin" placeholder="9-digit BIR TIN, no dashes" />
+
+        <label for="bizAddress">Business address</label>
+        <input type="text" id="bizAddress" />
+
+        <div class="checkbox-row">
+          <input type="checkbox" id="bizVat" />
+          <label for="bizVat" style="margin:0;">VAT-registered (uncheck if Non-VAT / Percentage Tax)</label>
+        </div>
+
+        <label for="bizPrefix">Invoice number prefix</label>
+        <input type="text" id="bizPrefix" placeholder="e.g. INV" value="INV" />
+
+        <div class="btn-row">
+          <button type="submit">Create business</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="dashboardState" style="display:none;">
+    <h1 id="bizNameHeading"></h1>
+    <p class="subtitle" id="bizMetaLine"></p>
+
+    <div class="summary-cards">
+      <div class="summary-card"><div class="label">Total Invoiced</div><div class="value" id="cardTotal">—</div></div>
+      <div class="summary-card"><div class="label">This Month</div><div class="value" id="cardMonth">—</div></div>
+      <div class="summary-card"><div class="label">Invoices Issued</div><div class="value" id="cardCount">—</div></div>
+      <div class="summary-card"><div class="label">Voided</div><div class="value" id="cardVoid">—</div></div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <h2 style="margin:0;">Recent Invoices</h2>
+        <a href="new-invoice.html" class="btn">+ New Invoice</a>
+      </div>
+      <div id="invoiceListWrap"></div>
+    </div>
+  </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="js/supabase-config.js"></script>
+<script src="js/util.js"></script>
+<script src="js/db.js"></script>
+<script src="js/nav.js"></script>
+<script>
+(async () => {
+  const session = await requireAuth();
+  if (!session) return;
+
+  const nav = await renderNav("app.html");
+  document.getElementById("mainContainer").style.display = "block";
+
+  if (!nav.currentId) {
+    document.getElementById("noBusinessState").style.display = "block";
+    return;
+  }
+
+  document.getElementById("dashboardState").style.display = "block";
+  await loadDashboard(nav.currentId, nav.businesses);
+})();
+
+document.getElementById("createBizForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const errEl = document.getElementById("createBizError");
+  errEl.style.display = "none";
+  try {
+    const id = await DB.createBusiness({
+      name: document.getElementById("bizName").value.trim(),
+      tin: document.getElementById("bizTin").value.trim(),
+      address: document.getElementById("bizAddress").value.trim(),
+      vat_registered: document.getElementById("bizVat").checked,
+      invoice_prefix: document.getElementById("bizPrefix").value.trim() || "INV",
+    });
+    CurrentBusiness.set(id);
+    window.location.reload();
+  } catch (err) {
+    errEl.textContent = err.message || "Could not create business.";
+    errEl.style.display = "block";
+  }
+});
+
+async function loadDashboard(businessId, businesses) {
+  const biz = businesses.find((b) => b.id === businessId);
+  document.getElementById("bizNameHeading").textContent = biz.name;
+  document.getElementById("bizMetaLine").textContent =
+    (biz.vat_registered ? "VAT-registered" : "Non-VAT") + (biz.tin ? ` · TIN ${biz.tin}` : "");
+
+  const invoices = await DB.listInvoices(businessId);
+
+  const issued = invoices.filter((i) => i.status === "issued");
+  const total = issued.reduce((s, i) => s + Number(i.gross_amount), 0);
+  const now = new Date();
+  const thisMonth = issued.filter((i) => {
+    const d = new Date(i.issue_date + "T00:00:00");
+    return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+  }).reduce((s, i) => s + Number(i.gross_amount), 0);
+
+  document.getElementById("cardTotal").textContent = peso(total);
+  document.getElementById("cardMonth").textContent = peso(thisMonth);
+  document.getElementById("cardCount").textContent = issued.length;
+  document.getElementById("cardVoid").textContent = invoices.filter((i) => i.status === "void").length;
+
+  const wrap = document.getElementById("invoiceListWrap");
+  if (invoices.length === 0) {
+    wrap.innerHTML = `<div class="empty-state">No invoices yet. <a href="new-invoice.html">Create your first one</a>.</div>`;
+    return;
+  }
+
+  const rows = invoices.slice(0, 25).map((inv) => `
+    <tr onclick="window.location='invoice.html?id=${inv.id}'" style="cursor:pointer;">
+      <td>${escapeHtml(inv.invoice_no)}</td>
+      <td>${fmtDate(inv.issue_date)}</td>
+      <td>${escapeHtml(inv.customer_name_snapshot)}</td>
+      <td class="num">${peso(inv.gross_amount)}</td>
+      <td><span class="badge ${inv.status === "void" ? "badge-void" : "badge-issued"}">${inv.status}</span></td>
+    </tr>
+  `).join("");
+
+  wrap.innerHTML = `
+    <table>
+      <thead><tr><th>Invoice #</th><th>Date</th><th>Customer</th><th class="num">Amount</th><th>Status</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+</script>
+</body>
+</html>

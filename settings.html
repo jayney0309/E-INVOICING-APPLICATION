@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Settings — Invoicing</title>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+<header class="topbar" id="topbar"></header>
+
+<div class="container">
+  <h1>Business Settings</h1>
+  <p class="subtitle">These details appear on every invoice you issue.</p>
+
+  <div class="notice">
+    Changing the invoice prefix or VAT status only affects <strong>future</strong> invoices — invoices you've already issued keep the numbering and VAT treatment they were created with.
+  </div>
+
+  <div class="card">
+    <div class="error-msg" id="errorMsg"></div>
+    <form id="settingsForm">
+      <label for="name">Business name</label>
+      <input type="text" id="name" required />
+
+      <label for="tin">TIN</label>
+      <input type="text" id="tin" placeholder="9-digit BIR TIN, no dashes" />
+
+      <label for="branch">BIR branch code</label>
+      <input type="text" id="branch" placeholder="00000 = head office" />
+
+      <label for="address">Business address</label>
+      <input type="text" id="address" />
+
+      <div class="checkbox-row">
+        <input type="checkbox" id="vat" />
+        <label for="vat" style="margin:0;">VAT-registered (uncheck if Non-VAT / Percentage Tax)</label>
+      </div>
+
+      <label for="prefix">Invoice number prefix</label>
+      <input type="text" id="prefix" />
+
+      <p class="subtitle" id="nextNoHint" style="margin-top:6px;"></p>
+
+      <div class="btn-row">
+        <button type="submit">Save changes</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="js/supabase-config.js"></script>
+<script src="js/util.js"></script>
+<script src="js/db.js"></script>
+<script src="js/nav.js"></script>
+<script>
+let businessId = null;
+
+(async () => {
+  const session = await requireAuth();
+  if (!session) return;
+  const nav = await renderNav("settings.html");
+  if (!nav.currentId) {
+    document.querySelector(".container").innerHTML = `<div class="empty-state">Set up a business first from the <a href="app.html">Dashboard</a>.</div>`;
+    return;
+  }
+  businessId = nav.currentId;
+  const biz = nav.businesses.find((b) => b.id === businessId);
+  document.getElementById("name").value = biz.name || "";
+  document.getElementById("tin").value = biz.tin || "";
+  document.getElementById("branch").value = biz.branch_code || "00000";
+  document.getElementById("address").value = biz.address || "";
+  document.getElementById("vat").checked = !!biz.vat_registered;
+  document.getElementById("prefix").value = biz.invoice_prefix || "INV";
+  document.getElementById("nextNoHint").textContent =
+    `Next invoice will be numbered: ${biz.invoice_prefix}-${String(biz.next_invoice_seq).padStart(6, "0")}`;
+})();
+
+document.getElementById("settingsForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const errEl = document.getElementById("errorMsg");
+  errEl.style.display = "none";
+  try {
+    await DB.updateBusiness(businessId, {
+      name: document.getElementById("name").value.trim(),
+      tin: document.getElementById("tin").value.trim(),
+      branch_code: document.getElementById("branch").value.trim() || "00000",
+      address: document.getElementById("address").value.trim(),
+      vat_registered: document.getElementById("vat").checked,
+      invoice_prefix: document.getElementById("prefix").value.trim() || "INV",
+    });
+    toast("Settings saved.");
+  } catch (err) {
+    errEl.textContent = err.message || "Could not save settings.";
+    errEl.style.display = "block";
+  }
+});
+</script>
+</body>
+</html>
