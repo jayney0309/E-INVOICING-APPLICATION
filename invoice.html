@@ -105,7 +105,8 @@ let invoice = null, items = null, business = null;
 function render() {
   document.getElementById("bizName").textContent = business.name;
   document.getElementById("bizAddress").textContent = business.address || "";
-  document.getElementById("bizTin").textContent = business.tin ? `TIN: ${business.tin}` : "";
+     const bizVatLabel = invoice.vat_registered_snapshot ? "VAT Registered" : "Non-VAT";
+   document.getElementById("bizTin").textContent = business.tin ? `TIN: ${business.tin} (${bizVatLabel})` : "";
 
   document.getElementById("invNo").textContent = invoice.invoice_no;
   document.getElementById("invDate").textContent = fmtDate(invoice.issue_date);
