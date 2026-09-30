@@ -13,14 +13,25 @@ function fmtDate(d) {
 
 // Client-side preview only — the database function fn_create_invoice is the
 // source of truth and recomputes this itself on save.
-function computeVatPreview(items, vatRegistered) {
+// vatTreatment: "standard" | "zero_rated" | "exempt" (only meaningful when
+// vatRegistered is true — a zero-rated or exempt sale has 0% VAT either way).
+function computeVatPreview(items, vatRegistered, vatTreatment) {
   const gross = items.reduce((sum, it) => sum + (Number(it.qty) || 0) * (Number(it.unit_price) || 0), 0);
   let vat = 0, net = gross;
-  if (vatRegistered) {
+  if (vatRegistered && (vatTreatment || "standard") === "standard") {
     vat = round2(gross - gross / 1.12);
     net = round2(gross - vat);
   }
   return { gross: round2(gross), vat, net };
+}
+
+// The exact phrase BIR requires printed on a zero-rated or exempt invoice.
+// Returns "" for a standard-VAT or Non-VAT invoice (nothing to stamp).
+function vatTreatmentStamp(vatRegistered, vatTreatment) {
+  if (!vatRegistered) return "";
+  if (vatTreatment === "zero_rated") return "VAT Zero-Rated Sale";
+  if (vatTreatment === "exempt") return "VAT-Exempt Sale";
+  return "";
 }
 
 function round2(n) {
@@ -80,6 +91,7 @@ function buildEisDraftJson(business, invoice, items) {
     },
     InvoiceNo: invoice.invoice_no,
     VatRegistered: !!invoice.vat_registered_snapshot,
+    VatTreatment: invoice.vat_treatment || "standard", // standard | zero_rated | exempt
     SalesAmt: Number(invoice.gross_amount),
     VatAmt: Number(invoice.vat_amount),
     NetSales: Number(invoice.net_of_vat),

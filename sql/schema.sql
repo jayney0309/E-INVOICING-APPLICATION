@@ -78,6 +78,16 @@ create table if not exists invoices (
   unique (business_id, invoice_no)
 );
 
+-- vat_treatment: only meaningful when vat_registered_snapshot is true.
+-- 'standard' = normal 12% VAT. 'zero_rated' / 'exempt' = 0% VAT, but BIR
+-- requires the invoice to be explicitly stamped as such (handled in the
+-- app's printable view) — they're kept as separate values (rather than
+-- both just meaning "no VAT") because they have different consequences for
+-- the seller's input VAT credit, which matters for your own records even
+-- though this app doesn't track input VAT itself.
+alter table invoices add column if not exists vat_treatment text not null default 'standard'
+  check (vat_treatment in ('standard', 'zero_rated', 'exempt'));
+
 -- ----------------------------------------------------------------------------
 -- invoice_items: line items for an invoice.
 -- ----------------------------------------------------------------------------
@@ -220,6 +230,13 @@ begin
 end;
 $$;
 
+-- Drop the older 7-argument version of this function if it exists (from
+-- before the vat_treatment parameter was added) — CREATE OR REPLACE only
+-- replaces a function with an IDENTICAL argument list; a changed argument
+-- list otherwise creates a second overloaded function instead of replacing
+-- the old one, which breaks callers with "function ... is not unique".
+drop function if exists fn_create_invoice(uuid, uuid, text, text, text, date, jsonb);
+
 -- p_items is a JSON array of {description, qty, unit_price}.
 create or replace function fn_create_invoice(
   p_business_id uuid,
@@ -228,7 +245,8 @@ create or replace function fn_create_invoice(
   p_customer_tin text,
   p_customer_address text,
   p_issue_date date,
-  p_items jsonb
+  p_items jsonb,
+  p_vat_treatment text default 'standard'
 ) returns uuid
 language plpgsql
 security definer
@@ -246,9 +264,14 @@ declare
   v_item jsonb;
   v_line_total numeric;
   v_sort integer := 0;
+  v_treatment text := coalesce(p_vat_treatment, 'standard');
 begin
   if not is_business_member(p_business_id) then
     raise exception 'not a member of this business';
+  end if;
+
+  if v_treatment not in ('standard', 'zero_rated', 'exempt') then
+    raise exception 'invalid vat_treatment: %', v_treatment;
   end if;
 
   -- lock the business row so concurrent invoice creation can't reuse a seq
@@ -266,22 +289,30 @@ begin
     v_gross := v_gross + v_line_total;
   end loop;
 
-  if v_vat_registered then
+  if v_vat_registered and v_treatment = 'standard' then
     v_vat := round(v_gross - (v_gross / (1 + v_vat_rate)), 2);
     v_net := v_gross - v_vat;
   else
+    -- non-VAT business, or a VAT-registered business's zero-rated/exempt sale
     v_vat := 0;
     v_net := v_gross;
+  end if;
+
+  -- a non-VAT business has no VAT treatment to speak of; always record
+  -- 'standard' for it so the column stays meaningful only where it applies
+  if not v_vat_registered then
+    v_treatment := 'standard';
   end if;
 
   insert into invoices (
     business_id, invoice_no, customer_id, customer_name_snapshot,
     customer_tin_snapshot, customer_address_snapshot, issue_date,
-    vat_registered_snapshot, gross_amount, vat_amount, net_of_vat, created_by
+    vat_registered_snapshot, gross_amount, vat_amount, net_of_vat,
+    vat_treatment, created_by
   ) values (
     p_business_id, v_invoice_no, p_customer_id, p_customer_name,
     p_customer_tin, p_customer_address, coalesce(p_issue_date, current_date),
-    v_vat_registered, v_gross, v_vat, v_net, auth.uid()
+    v_vat_registered, v_gross, v_vat, v_net, v_treatment, auth.uid()
   ) returning id into v_invoice_id;
 
   for v_item in select * from jsonb_array_elements(p_items) loop

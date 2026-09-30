@@ -102,7 +102,7 @@ const DB = {
     return data;
   },
 
-  async createInvoice({ businessId, customerId, customerName, customerTin, customerAddress, issueDate, items, vatTreatment }) {
+  async createInvoice({ businessId, customerId, customerName, customerTin, customerAddress, issueDate, items }) {
     const { data, error } = await supabaseClient.rpc("fn_create_invoice", {
       p_business_id: businessId,
       p_customer_id: customerId,
@@ -111,7 +111,6 @@ const DB = {
       p_customer_address: customerAddress,
       p_issue_date: issueDate,
       p_items: items.map((it) => ({ description: it.description, qty: it.qty, unit_price: it.unit_price })),
-      p_vat_treatment: vatTreatment || "standard",
     });
     if (error) throw error;
     return data; // new invoice id

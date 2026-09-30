@@ -6,8 +6,8 @@
 // from the Row Level Security policies in sql/schema.sql, not from
 // hiding this key.
 // ============================================================================
-const SUPABASE_URL = "https://gikvscsmevmkpxiniwyu.supabase.co";
-const SUPABASE_ANON_KEY = "sb_publishable_yG_egTkPFzCfcyYlc_FexA_Hu1RZ72Z";
+const SUPABASE_URL = "YOUR_SUPABASE_PROJECT_URL";
+const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY";
 
 let supabaseClient;
 if (SUPABASE_URL.startsWith("YOUR_") || SUPABASE_ANON_KEY.startsWith("YOUR_")) {

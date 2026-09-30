@@ -55,8 +55,10 @@
       <tbody id="itemsBody"></tbody>
     </table>
 
+    <div id="vatStamp" style="display:none; font-weight:700; letter-spacing:0.03em; margin:10px 0; color:var(--navy);"></div>
+
     <div class="totals-box">
-      <div class="row" id="rowVat" style="display:none;"><span>VAT (12%, inclusive)</span><span id="totVat"></span></div>
+      <div class="row" id="rowVat" style="display:none;"><span id="vatLabel">VAT (12%, inclusive)</span><span id="totVat"></span></div>
       <div class="row" id="rowNet"><span id="netLabel">Net of VAT</span><span id="totNet"></span></div>
       <div class="row grand"><span>Total</span><span id="totGross"></span></div>
     </div>
@@ -105,8 +107,8 @@ let invoice = null, items = null, business = null;
 function render() {
   document.getElementById("bizName").textContent = business.name;
   document.getElementById("bizAddress").textContent = business.address || "";
-     const bizVatLabel = invoice.vat_registered_snapshot ? "VAT Registered" : "Non-VAT";
-   document.getElementById("bizTin").textContent = business.tin ? `TIN: ${business.tin} (${bizVatLabel})` : "";
+  const bizVatLabel = invoice.vat_registered_snapshot ? "VAT Registered" : "Non-VAT";
+  document.getElementById("bizTin").textContent = business.tin ? `TIN: ${business.tin} (${bizVatLabel})` : "";
 
   document.getElementById("invNo").textContent = invoice.invoice_no;
   document.getElementById("invDate").textContent = fmtDate(invoice.issue_date);
@@ -117,7 +119,18 @@ function render() {
   document.getElementById("custTin").textContent = invoice.customer_tin_snapshot ? `TIN: ${invoice.customer_tin_snapshot}` : "";
   document.getElementById("custAddress").textContent = invoice.customer_address_snapshot || "";
 
-  document.getElementById("vatType").textContent = invoice.vat_registered_snapshot ? "VAT" : "Non-VAT";
+  const treatment = invoice.vat_treatment || "standard";
+  const treatmentLabel = { standard: "VAT", zero_rated: "VAT — Zero-Rated", exempt: "VAT — Exempt" }[treatment];
+  document.getElementById("vatType").textContent = invoice.vat_registered_snapshot ? treatmentLabel : "Non-VAT";
+
+  const stamp = vatTreatmentStamp(invoice.vat_registered_snapshot, treatment);
+  const stampEl = document.getElementById("vatStamp");
+  if (stamp) {
+    stampEl.textContent = stamp;
+    stampEl.style.display = "block";
+  } else {
+    stampEl.style.display = "none";
+  }
 
   document.getElementById("itemsBody").innerHTML = items.map((it) => `
     <tr>
@@ -131,6 +144,8 @@ function render() {
   if (invoice.vat_registered_snapshot) {
     document.getElementById("rowVat").style.display = "flex";
     document.getElementById("totVat").textContent = peso(invoice.vat_amount);
+    document.getElementById("vatLabel").textContent =
+      treatment === "standard" ? "VAT (12%, inclusive)" : treatment === "zero_rated" ? "VAT (0% — Zero-Rated)" : "VAT (0% — Exempt)";
     document.getElementById("netLabel").textContent = "Net of VAT";
   } else {
     document.getElementById("netLabel").textContent = "Amount";

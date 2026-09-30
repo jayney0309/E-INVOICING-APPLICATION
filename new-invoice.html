@@ -39,6 +39,16 @@
 
       <label for="issueDate">Issue date</label>
       <input type="date" id="issueDate" required />
+
+      <div id="vatTreatmentRow" style="display:none;">
+        <label for="vatTreatment">VAT treatment for this invoice</label>
+        <select id="vatTreatment">
+          <option value="standard">Standard (12% VAT)</option>
+          <option value="zero_rated">Zero-Rated (0% — e.g. export sale)</option>
+          <option value="exempt">VAT-Exempt (0% — e.g. exempt transaction)</option>
+        </select>
+        <p class="subtitle" id="vatTreatmentNote" style="margin-top:4px;"></p>
+      </div>
     </div>
 
     <div class="card">
@@ -91,6 +101,7 @@ let customers = [];
       ? `${business.name} is VAT-registered — VAT will be computed automatically (inclusive method).`
       : `${business.name} is Non-VAT — no VAT line will be shown on this invoice.`;
   document.getElementById("vatRow").style.display = business.vat_registered ? "flex" : "none";
+  document.getElementById("vatTreatmentRow").style.display = business.vat_registered ? "block" : "none";
   document.getElementById("issueDate").valueAsDate = new Date();
 
   customers = await DB.listCustomers(businessId);
@@ -150,12 +161,18 @@ function recalcTotals() {
     row.querySelector(".li-total").textContent = peso(qty * price);
   });
   const items = getItems();
-  const { gross, vat, net } = computeVatPreview(items, business ? business.vat_registered : false);
+  const vatTreatment = document.getElementById("vatTreatment").value;
+  const { gross, vat, net } = computeVatPreview(items, business ? business.vat_registered : false, vatTreatment);
   document.getElementById("totGross").textContent = peso(gross);
   document.getElementById("totVat").textContent = peso(vat);
   document.getElementById("totNet").textContent = peso(net);
   document.getElementById("totGrand").textContent = peso(gross);
+
+  const stamp = vatTreatmentStamp(business ? business.vat_registered : false, vatTreatment);
+  document.getElementById("vatTreatmentNote").textContent = stamp ? `This invoice will be stamped "${stamp}".` : "";
 }
+
+document.getElementById("vatTreatment").addEventListener("change", recalcTotals);
 
 document.getElementById("invoiceForm").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -189,6 +206,7 @@ document.getElementById("invoiceForm").addEventListener("submit", async (e) => {
       customerAddress: custAddress,
       issueDate: document.getElementById("issueDate").value,
       items,
+      vatTreatment: document.getElementById("vatTreatment").value,
     });
 
     window.location.href = `invoice.html?id=${invoiceId}`;
