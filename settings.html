@@ -47,6 +47,29 @@
       </div>
     </form>
   </div>
+
+  <div class="card">
+    <h2>Team</h2>
+    <p class="subtitle">People who can see and manage this business's invoices — for example, your accountant, or staff.</p>
+    <div id="membersWrap"></div>
+
+    <h2 style="margin-top:22px;">Invite someone</h2>
+    <p class="subtitle">If they already have an account, they'll get access the next time they sign in. If not, they'll get access automatically the moment they sign up with this email.</p>
+    <div class="error-msg" id="inviteError"></div>
+    <form id="inviteForm">
+      <label for="inviteEmail">Email</label>
+      <input type="email" id="inviteEmail" required />
+      <label for="inviteRole">Role</label>
+      <select id="inviteRole">
+        <option value="staff">Staff (can create/view invoices)</option>
+        <option value="owner">Owner (can also manage settings/team)</option>
+      </select>
+      <div class="btn-row">
+        <button type="submit">Send invite</button>
+      </div>
+    </form>
+    <div id="invitesWrap" style="margin-top:14px;"></div>
+  </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
@@ -56,10 +79,12 @@
 <script src="js/nav.js"></script>
 <script>
 let businessId = null;
+let myEmail = null;
 
 (async () => {
   const session = await requireAuth();
   if (!session) return;
+  myEmail = (session.user && session.user.email || "").toLowerCase();
   const nav = await renderNav("settings.html");
   if (!nav.currentId) {
     document.querySelector(".container").innerHTML = `<div class="empty-state">Set up a business first from the <a href="app.html">Dashboard</a>.</div>`;
@@ -75,7 +100,111 @@ let businessId = null;
   document.getElementById("prefix").value = biz.invoice_prefix || "INV";
   document.getElementById("nextNoHint").textContent =
     `Next invoice will be numbered: ${biz.invoice_prefix}-${String(biz.next_invoice_seq).padStart(6, "0")}`;
+
+  await loadTeam();
 })();
+
+async function loadTeam() {
+  const membersWrap = document.getElementById("membersWrap");
+  const invitesWrap = document.getElementById("invitesWrap");
+  try {
+    const [members, invites] = await Promise.all([
+      DB.listTeamMembers(businessId),
+      DB.listPendingInvites(businessId),
+    ]);
+    renderMembers(members);
+    renderInvites(invites);
+  } catch (err) {
+    membersWrap.innerHTML = `<div class="empty-state">Could not load team: ${escapeHtml(err.message || String(err))}</div>`;
+    invitesWrap.innerHTML = "";
+  }
+}
+
+function renderMembers(members) {
+  const wrap = document.getElementById("membersWrap");
+  if (!members.length) {
+    wrap.innerHTML = `<div class="empty-state">No team members yet.</div>`;
+    return;
+  }
+  const rows = members.map((m) => {
+    const isMe = (m.member_email || "").toLowerCase() === myEmail;
+    return `
+      <tr>
+        <td>${escapeHtml(m.member_email || "(unknown)")}${isMe ? ` <span class="you-tag">(you)</span>` : ""}</td>
+        <td><span class="badge ${m.role === "owner" ? "badge-issued" : "badge-nonvat"}">${escapeHtml(m.role)}</span></td>
+        <td class="num"><button type="button" class="secondary btn-sm remove-member-btn" data-id="${m.id}" data-email="${escapeHtml(m.member_email || "")}">Remove</button></td>
+      </tr>`;
+  }).join("");
+  wrap.innerHTML = `
+    <table>
+      <thead><tr><th>Email</th><th>Role</th><th class="num"></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  wrap.querySelectorAll(".remove-member-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (!confirm(`Remove ${btn.dataset.email} from this business?`)) return;
+      try {
+        await DB.removeMember(btn.dataset.id);
+        toast("Removed.");
+        await loadTeam();
+      } catch (err) {
+        toast(err.message || "Could not remove member.", true);
+      }
+    });
+  });
+}
+
+function renderInvites(invites) {
+  const wrap = document.getElementById("invitesWrap");
+  if (!invites.length) {
+    wrap.innerHTML = "";
+    return;
+  }
+  const rows = invites.map((inv) => `
+    <tr>
+      <td>${escapeHtml(inv.email)}</td>
+      <td><span class="badge badge-nonvat">${escapeHtml(inv.role)}</span></td>
+      <td><span class="badge" style="background:#fff8e1;color:#6b5900;">pending</span></td>
+      <td class="num"><button type="button" class="secondary btn-sm cancel-invite-btn" data-id="${inv.id}" data-email="${escapeHtml(inv.email)}">Cancel</button></td>
+    </tr>`).join("");
+  wrap.innerHTML = `
+    <p class="subtitle" style="margin-bottom:8px;">Pending invites</p>
+    <table>
+      <thead><tr><th>Email</th><th>Role</th><th>Status</th><th class="num"></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  wrap.querySelectorAll(".cancel-invite-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (!confirm(`Cancel the invite to ${btn.dataset.email}?`)) return;
+      try {
+        await DB.cancelInvite(btn.dataset.id);
+        toast("Invite cancelled.");
+        await loadTeam();
+      } catch (err) {
+        toast(err.message || "Could not cancel invite.", true);
+      }
+    });
+  });
+}
+
+document.getElementById("inviteForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const errEl = document.getElementById("inviteError");
+  errEl.style.display = "none";
+  const email = document.getElementById("inviteEmail").value.trim();
+  const role = document.getElementById("inviteRole").value;
+  try {
+    await DB.inviteMember(businessId, email, role);
+    document.getElementById("inviteForm").reset();
+    toast(`Invite sent to ${email}.`);
+    await loadTeam();
+  } catch (err) {
+    let msg = err.message || "Could not send invite.";
+    if (/duplicate key/i.test(msg)) msg = "There's already a pending invite for that email.";
+    errEl.textContent = msg;
+    errEl.style.display = "block";
+  }
+});
 
 document.getElementById("settingsForm").addEventListener("submit", async (e) => {
   e.preventDefault();

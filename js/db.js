@@ -121,6 +121,50 @@ const DB = {
     const { error } = await supabaseClient.rpc("fn_void_invoice", { p_invoice_id: invoiceId });
     if (error) throw error;
   },
+
+  async listTeamMembers(businessId) {
+    const { data, error } = await supabaseClient
+      .from("business_members")
+      .select("id, role, member_email, created_at")
+      .eq("business_id", businessId)
+      .order("created_at");
+    if (error) throw error;
+    return data;
+  },
+
+  async listPendingInvites(businessId) {
+    const { data, error } = await supabaseClient
+      .from("business_invites")
+      .select("id, email, role, created_at")
+      .eq("business_id", businessId)
+      .is("accepted_at", null)
+      .order("created_at");
+    if (error) throw error;
+    return data;
+  },
+
+  async inviteMember(businessId, email, role) {
+    const { error } = await supabaseClient
+      .from("business_invites")
+      .insert({ business_id: businessId, email: email.trim().toLowerCase(), role });
+    if (error) throw error;
+  },
+
+  async cancelInvite(inviteId) {
+    const { error } = await supabaseClient.from("business_invites").delete().eq("id", inviteId);
+    if (error) throw error;
+  },
+
+  async removeMember(memberId) {
+    const { error } = await supabaseClient.from("business_members").delete().eq("id", memberId);
+    if (error) throw error;
+  },
+
+  async acceptPendingInvites() {
+    const { data, error } = await supabaseClient.rpc("fn_accept_pending_invites");
+    if (error) throw error;
+    return data; // number of invites accepted
+  },
 };
 
 // ----------------------------------------------------------------------------
@@ -140,12 +184,24 @@ const CurrentBusiness = {
 };
 
 // Redirect to login if not authenticated. Call at the top of every
-// protected page.
+// protected page. Also picks up any pending invites for this email —
+// once per browser tab session, not on every single page load.
 async function requireAuth() {
   const session = await DB.getSession();
   if (!session) {
     window.location.href = "index.html";
     return null;
+  }
+  if (!sessionStorage.getItem("invites_checked")) {
+    sessionStorage.setItem("invites_checked", "1");
+    try {
+      const accepted = await DB.acceptPendingInvites();
+      if (accepted > 0) {
+        toast(`You now have access to ${accepted} business${accepted === 1 ? "" : "es"}.`);
+      }
+    } catch (e) {
+      // non-fatal — worst case, a pending invite is picked up on next sign-in
+    }
   }
   return session;
 }

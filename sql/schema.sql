@@ -42,6 +42,35 @@ create table if not exists business_members (
   unique (business_id, user_id)
 );
 
+-- member_email: a snapshot of the member's email, stored here so the app can
+-- show a team list without ever querying auth.users directly from the
+-- client (Supabase locks that down for privacy/security reasons).
+alter table business_members add column if not exists member_email text;
+
+-- One-time backfill for members added before this column existed — this
+-- UPDATE runs with the elevated access the SQL Editor has, so it can read
+-- auth.users just this once; the app itself never does.
+update business_members bm set member_email = u.email
+  from auth.users u
+  where bm.user_id = u.id and bm.member_email is null;
+
+-- ----------------------------------------------------------------------------
+-- business_invites: "invite someone@email.com to this business" — created
+-- before the invitee necessarily has an account. fn_accept_pending_invites()
+-- turns a matching invite into a real business_members row the moment that
+-- email signs in (whether they already had an account or just made one).
+-- ----------------------------------------------------------------------------
+create table if not exists business_invites (
+  id uuid primary key default gen_random_uuid(),
+  business_id uuid not null references businesses(id) on delete cascade,
+  email text not null,
+  role text not null default 'staff' check (role in ('owner', 'staff')),
+  invited_by uuid references auth.users(id),
+  created_at timestamptz not null default now(),
+  accepted_at timestamptz,
+  unique (business_id, email)
+);
+
 -- ----------------------------------------------------------------------------
 -- customers: a business's buyers. Snapshotted onto each invoice at issue
 -- time (see invoices table) so editing a customer never rewrites history.
@@ -111,6 +140,7 @@ create index if not exists idx_invoice_items_invoice on invoice_items(invoice_id
 -- ============================================================================
 alter table businesses enable row level security;
 alter table business_members enable row level security;
+alter table business_invites enable row level security;
 alter table customers enable row level security;
 alter table invoices enable row level security;
 alter table invoice_items enable row level security;
@@ -156,6 +186,21 @@ create policy business_members_insert on business_members
 
 drop policy if exists business_members_delete on business_members;
 create policy business_members_delete on business_members
+  for delete using (is_business_member(business_id));
+
+-- business_invites: members can see/create/cancel invites for their own
+-- business. There is deliberately no policy letting anyone read another
+-- business's invites or see which emails have accounts elsewhere.
+drop policy if exists business_invites_select on business_invites;
+create policy business_invites_select on business_invites
+  for select using (is_business_member(business_id));
+
+drop policy if exists business_invites_insert on business_invites;
+create policy business_invites_insert on business_invites
+  for insert with check (is_business_member(business_id));
+
+drop policy if exists business_invites_delete on business_invites;
+create policy business_invites_delete on business_invites
   for delete using (is_business_member(business_id));
 
 -- customers
@@ -223,10 +268,43 @@ begin
   values (p_name, p_tin, p_address, p_vat_registered, coalesce(nullif(p_invoice_prefix, ''), 'INV'), auth.uid())
   returning id into v_business_id;
 
-  insert into business_members (business_id, user_id, role)
-  values (v_business_id, auth.uid(), 'owner');
+  insert into business_members (business_id, user_id, role, member_email)
+  values (v_business_id, auth.uid(), 'owner', lower(auth.jwt() ->> 'email'));
 
   return v_business_id;
+end;
+$$;
+
+-- Call this once per sign-in (the app does this automatically) so any
+-- invite waiting for the signed-in user's email turns into real access.
+-- Safe to call repeatedly — already-accepted invites are skipped.
+create or replace function fn_accept_pending_invites()
+returns integer
+language plpgsql
+security definer
+as $$
+declare
+  v_email text := lower(auth.jwt() ->> 'email');
+  v_invite record;
+  v_count integer := 0;
+begin
+  if v_email is null then
+    return 0;
+  end if;
+
+  for v_invite in
+    select * from business_invites
+    where lower(email) = v_email and accepted_at is null
+  loop
+    insert into business_members (business_id, user_id, role, member_email)
+    values (v_invite.business_id, auth.uid(), v_invite.role, v_email)
+    on conflict (business_id, user_id) do nothing;
+
+    update business_invites set accepted_at = now() where id = v_invite.id;
+    v_count := v_count + 1;
+  end loop;
+
+  return v_count;
 end;
 $$;
 
